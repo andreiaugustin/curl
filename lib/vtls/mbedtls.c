@@ -247,7 +247,12 @@ static CURLcode mbedtls_version_from_curl(int *mbedver, long version)
       *mbedver = MBEDTLS_SSL_MINOR_VERSION_3;
       return CURLE_OK;
     case CURL_SSLVERSION_TLSv1_3:
-      break;
+      #if MBEDTLS_VERSION_NUMBER >= 0x03010000
+        *mbedver = MBEDTLS_SSL_MINOR_VERSION_4;
+        return CURLE_OK;
+      #else
+        break;
+      #endif
   }
 #else
   switch(version) {
@@ -277,7 +282,11 @@ set_ssl_version_min_max(struct Curl_cfilter *cf, struct Curl_easy *data)
   struct ssl_primary_config *conn_config = Curl_ssl_cf_get_primary_config(cf);
 #if MBEDTLS_VERSION_NUMBER >= 0x03000000
   int mbedtls_ver_min = MBEDTLS_SSL_MINOR_VERSION_3;
-  int mbedtls_ver_max = MBEDTLS_SSL_MINOR_VERSION_3;
+  #if MBEDTLS_VERSION_NUMBER >= 0x03010000
+    int mbedtls_ver_max = MBEDTLS_SSL_MINOR_VERSION_4;
+  #else
+    int mbedtls_ver_max = MBEDTLS_SSL_MINOR_VERSION_3;
+  #endif
 #else
   int mbedtls_ver_min = MBEDTLS_SSL_MINOR_VERSION_1;
   int mbedtls_ver_max = MBEDTLS_SSL_MINOR_VERSION_1;
@@ -298,7 +307,11 @@ set_ssl_version_min_max(struct Curl_cfilter *cf, struct Curl_easy *data)
   switch(ssl_version_max) {
     case CURL_SSLVERSION_MAX_NONE:
     case CURL_SSLVERSION_MAX_DEFAULT:
+#if defined(MBEDTLS_SSL_PROTO_TLS1_3) && MBEDTLS_VERSION_NUMBER >= 0x03010000
+      ssl_version_max = CURL_SSLVERSION_MAX_TLSv1_3;
+#else
       ssl_version_max = CURL_SSLVERSION_MAX_TLSv1_2;
+#endif
       break;
   }
 
@@ -725,6 +738,17 @@ mbed_connect_step2(struct Curl_cfilter *cf, struct Curl_easy *data)
     data->set.str[STRING_SSL_PINNEDPUBLICKEY];
 
   DEBUGASSERT(backend);
+
+#if defined(MBEDTLS_USE_PSA_CRYPTO) /* add check when using tls 1.3?*/
+    ret = psa_crypto_init();
+    if(ret != PSA_SUCCESS) {
+      char errorbuf[128];
+      mbedtls_strerror(ret, errorbuf, sizeof(errorbuf));
+      failf(data, "psa_crypto_init returned - mbedTLS: (-0x%04X) %s",
+          -ret, errorbuf);
+      return CURLE_SSL_CONNECT_ERROR;
+    }
+#endif /* MBEDTLS_USE_PSA_CRYPTO */
 
   ret = mbedtls_ssl_handshake(&backend->ssl);
 
